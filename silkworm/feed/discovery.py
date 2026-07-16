@@ -14,7 +14,6 @@ def normalize_url(raw_url: str, base_url: str | None = None) -> str:
     hostname = parsed.hostname.lower() if parsed.hostname else ""
     path = parsed.path.rstrip("/") or "/"
     query = parsed.query  # 保留 query（某些文档站使用）
-    fragment = ""
 
     normalized = f"{scheme}://{hostname}{path}"
     if query:

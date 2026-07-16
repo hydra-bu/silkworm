@@ -1,6 +1,5 @@
 """Discovery 单元测试。"""
 
-import pytest
 
 from silkworm.feed.discovery import is_allowed, normalize_url
 

@@ -2,7 +2,6 @@
 
 from pathlib import Path
 
-import pytest
 
 from silkworm.feed.fetcher import compute_content_hash, save_raw_html
 

@@ -1,6 +1,5 @@
 from unittest.mock import patch
 
-import pytest
 
 from silkworm.config import LLMConfig
 from silkworm.spin.quality import (

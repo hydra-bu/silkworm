@@ -9,7 +9,6 @@ from silkworm.feed.discovery import (
     discover_sitemap_url,
     discover_from_sitemap,
 )
-from silkworm.feed.fetcher import fetch_page
 from silkworm.feed.navigator.extractor import extract_nav_html
 from silkworm.feed.navigator.analyzer import analyze_nav_tree
 from silkworm.feed.navigator.crawler import flatten_nav_tree, priority_stats

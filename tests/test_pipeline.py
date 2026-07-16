@@ -57,7 +57,7 @@ class TestPipelineOrchestrator:
     def test_quality_report_in_record(self):
         orchestrator = PipelineOrchestrator()
         record = PageRecord(url="https://k8s.test/docs/test/")
-        result = orchestrator.run(_KUBE_HTML, record)
+        orchestrator.run(_KUBE_HTML, record)
 
         assert record.quality_report is not None
         assert isinstance(record.quality_report, dict)

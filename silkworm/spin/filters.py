@@ -4,7 +4,6 @@ import html as html_mod
 import re
 from typing import Callable
 
-from lxml import etree as lxml_etree
 from lxml import html as lxml_html
 from lxml.html import HtmlElement
 from markdownify import markdownify as md_convert
@@ -679,7 +678,7 @@ def filter_unescape_code_underscores(md_content: str, _profile: FrameworkProfile
 
 
 def filter_escape_cell_pipes_html(html_content: str, _profile: FrameworkProfile) -> str:
-    """Escape literal '|' inside table cells at the HTML stage.
+    r"""Escape literal '|' inside table cells at the HTML stage.
 
     markdownify never escapes a '|' inside table-cell content, so values such as
     union types `` `("a" | "b")` ``, CLI placeholders `` `<env|convex>` ``, the

@@ -7,8 +7,6 @@ from silkworm.spin.filters import (
     _extract_code_text,
     _make_fenced_block,
     filter_boilerplate,
-    filter_flatten_block_in_cells,
-    filter_flatten_nested_tables,
     filter_html_to_md,
     filter_line_numbered_code,
     filter_main_content,
@@ -136,7 +134,7 @@ class TestExtractCodeText:
         from lxml import html as lxml_html
         tree = lxml_html.fromstring("<code>line1<br>line2<br/>line3</code>")
         result = _extract_code_text(tree)
-        lines = [l for l in result.split("\n") if l.strip()]
+        lines = [ln for ln in result.split("\n") if ln.strip()]
         assert len(lines) == 3
 
 

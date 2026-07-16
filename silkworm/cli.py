@@ -183,7 +183,7 @@ def _run_feed(
                 console.print(f"    ...（共 {len(urls)} 个）")
         return
 
-    console.print(f"\n[bold cyan]▸ 阶段 2/3: 抓取页面[/]")
+    console.print("\n[bold cyan]▸ 阶段 2/3: 抓取页面[/]")
     records = asyncio.run(_do_fetch(urls, cocoon))
     ok = [r for r in records if r.http_status == 200]
     console.print(f"  → 成功 [green]{len(ok)}[/]，失败 [red]{len(records) - len(ok)}[/]")
@@ -195,7 +195,7 @@ def _run_feed(
             console.print("\n[yellow]⏭  跳过清洗阶段（--skip-pipeline）[/]")
         return
 
-    console.print(f"\n[bold cyan]▸ 阶段 3/3: 清洗 → 质检 → 输出 Markdown[/]")
+    console.print("\n[bold cyan]▸ 阶段 3/3: 清洗 → 质检 → 输出 Markdown[/]")
     results = _do_process(ok, cocoon, cfg, site_name)
     _print_summary(site_name, results, silk_dir)
 
@@ -251,7 +251,7 @@ def spin(
         console.print("[red]❌ 无成功抓取的页面可处理[/]")
         raise typer.Exit(1)
 
-    console.print(f"\n[bold cyan]▸ 清洗 → 质检 → 输出 Markdown[/]")
+    console.print("\n[bold cyan]▸ 清洗 → 质检 → 输出 Markdown[/]")
     results = _do_process(ok, cocoon, cfg, site)
     _print_summary(site, results, silk_dir)
 
