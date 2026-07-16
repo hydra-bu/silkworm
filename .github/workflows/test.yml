@@ -29,16 +29,8 @@ jobs:
       - name: Lint with ruff
         run: uv run ruff check silkworm/ tests/
 
-      - name: Debug environment
-        run: |
-          uv run python --version
-          uv run python -c "import sys; print(sys.path)"
-          uv run python -c "import pytest; print('pytest', pytest.__version__)"
-          uv run python -c "import pytest_asyncio; print('pytest-asyncio', pytest_asyncio.__version__)"
-          ls -la tests/
-
       - name: Test with pytest
-        run: uv run pytest -v --tb=long --cov=silkworm --cov-report=xml --cov-report=term 2>&1
+        run: uv run pytest --cov=silkworm --cov-report=xml --cov-report=term
 
   build:
     runs-on: ubuntu-latest
