@@ -1,0 +1,41 @@
+[project]
+name = "silkworm"
+version = "0.1.0"
+description = "站点文档抓取工具 — Feed it pages, get back silk."
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27.0",
+    "lxml>=5.0.0",
+    "cssselect>=1.2.0",
+    "trafilatura>=1.8.0",
+    "markdownify>=0.12.0",
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+    "pyyaml>=6.0",
+    "typer>=0.9.0",
+    "rich>=13.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.1.0",
+    "pytest-mock>=3.12.0",
+    "ruff>=0.6.0",
+    "httpx>=0.27.0",
+]
+
+[project.scripts]
+silkworm = "silkworm.cli:app"
+
+[build-system]
+requires = ["setuptools>=64.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["silkworm*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
