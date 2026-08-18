@@ -28,7 +28,12 @@ async def fetch_page(
     client: httpx.AsyncClient, url: str, cocoon_dir: Path, user_agent: str | None = None
 ) -> PageRecord:
     """抓取单个页面并保存原始 HTML，返回 PageRecord。"""
-    headers = {"User-Agent": user_agent or "Silkworm/0.1.0"}
+    headers = {
+        "User-Agent": user_agent or "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
+        "Referer": "https://unsloth.ai/",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Authorization": "Bearer hf_dFvawCcsWolXLiqlktfxd zCnxrvZuLIrDU",
+    }
 
     try:
         resp = await client.get(url, headers=headers, follow_redirects=True, timeout=30.0)

@@ -375,7 +375,7 @@ async def _do_fetch(urls: list[str], cocoon: Path) -> list:
     import httpx
     from silkworm.feed.fetcher import fetch_page
 
-    user_agent = "Silkworm/0.1.0 (+https://github.com/silkworm)"
+    user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
 
     records = []
     async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:

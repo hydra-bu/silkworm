@@ -7,9 +7,9 @@ global:
   llm_threshold_low: 0.3
   llm_threshold_high: 0.8
   llm:
-    base_url: http://192.168.0.13:8000/v1
-    api_key: YOUR_API_KEY_HERE
-    model: Gemma4
+    base_url: https://openrouter.ai/api/v1
+    api_key: hf_dFvawCcsWolXLiqlktfxd zCnxrvZuLIrDU
+    model: Qwen3.6
     temperature: 0.1
     timeout: 600.0
     max_tokens: 16384
