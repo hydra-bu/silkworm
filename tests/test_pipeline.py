@@ -117,3 +117,163 @@ class TestPipelineOrchestratorGeneric:
 
         assert result.record.framework == "generic"
         assert result.retry_count == 0
+
+
+_GITBOOK_MD = """# API
+
+> For the complete documentation index, see [llms.txt](https://unsloth.ai/docs/llms.txt).
+
+## Open a terminal and load a GGUF model
+
+```bash
+unsloth run --model unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q4_K_XL
+```
+
+{% columns %}
+
+{% column %}
+
+Column text.
+
+{% endcolumn %}
+
+{% endcolumns %}
+
+# Agent Instructions
+
+GET https://unsloth.ai/docs/docs.md?ask=<question>
+
+Instructions for AI agents visiting this page.
+"""
+
+
+class TestPipelineMarkdownSource:
+    def test_markdown_source_reuses_detected_framework(self):
+        """markdown 源应使用 fetch 阶段检测到的 gitbook profile，
+        markdown_strip_headings（Agent Instructions）与 boilerplate 短语才能生效。"""
+        orchestrator = PipelineOrchestrator()
+        record = PageRecord(
+            url="https://unsloth.ai/docs/basics/api",
+            source="markdown",
+            framework="gitbook",
+        )
+        result = orchestrator.run(_GITBOOK_MD, record)
+
+        assert result.record.framework == "gitbook"
+        assert result.final_report.passed is True
+        # gitbook profile 的 markdown_strip_headings 生效
+        assert "# Agent Instructions" not in result.content
+        assert "Instructions for AI agents" not in result.content
+        # liquid 标签剥离
+        assert "{% columns %}" not in result.content
+        assert "{% column %}" not in result.content
+        # boilerplate 短语行剥离
+        assert "For the complete documentation index" not in result.content
+        # 代码块保留
+        assert "```bash" in result.content
+        assert "unsloth run --model" in result.content
+
+    def test_markdown_source_without_framework_falls_back_generic(self):
+        orchestrator = PipelineOrchestrator()
+        record = PageRecord(
+            url="https://unsloth.ai/docs/basics/api",
+            source="markdown",
+        )
+        result = orchestrator.run(_GITBOOK_MD, record)
+
+        assert result.record.framework == "generic"
+        # generic profile 无 markdown_strip_headings → Agent Instructions 保留
+        assert "# Agent Instructions" in result.content
+        # 代码块仍保留
+        assert "```bash" in result.content
+
+class TestPipelineMarkdownSource:
+    GITBOOK_PROFILE = None
+
+    def _gitbook_profile(self):
+        from silkworm.spin.detector import get_profile
+        return get_profile("gitbook")
+
+    def test_markdown_path_uses_framework_profile(self):
+        """source=markdown 且 framework=gitbook → 用 gitbook profile 清洗
+        （markdown_strip_headings 移除 Agent Instructions 章节）。"""
+        orchestrator = PipelineOrchestrator()
+        record = PageRecord(
+            url="https://unsloth.ai/docs/basics/api",
+            source="markdown",
+            framework="gitbook",
+        )
+        md = (
+            "# API\n\n"
+            "Official docs content about the API.\n\n"
+            "```python\nprint('hello')\n```\n\n"
+            "More content to satisfy the minimum length gate for this page.\n"
+            + "x" * 400
+            + "\n\n# Agent Instructions\n\nCite the docs. Do not hallucinate.\n"
+        )
+        result = orchestrator.run(md, record)
+        assert "Agent Instructions" not in result.content
+        assert "Cite the docs" not in result.content
+        assert "```python" in result.content
+
+    def test_markdown_hard_fail_when_code_lost(self):
+        """原始有围栏但清洗后 0 围栏 → 质检不通过（防误报）。"""
+        orchestrator = PipelineOrchestrator(quality_min_length=1, quality_threshold=0.0)
+        record = PageRecord(url="https://x.com/docs/y", source="markdown")
+        md = "# T\n\n```python\nx = 1\n```\n\n" + ("word " * 200) + "\n"
+        # monkeypatch normalize_markdown 模拟代码块被误剥
+        import silkworm.pipeline as p
+        orig = p.normalize_markdown
+        p.normalize_markdown = lambda raw, profile: "# T\n\n" + ("word " * 200) + "\n"
+        try:
+            result = orchestrator.run(md, record)
+        finally:
+            p.normalize_markdown = orig
+        assert result.final_report.passed is False
+        assert "code_preserved" in result.final_report.checks
+
+
+class TestInferFrameworkFromUrl:
+    def test_gitbook_md_url(self):
+        from silkworm.pipeline import PipelineOrchestrator
+        assert (
+            PipelineOrchestrator._infer_framework_from_url(
+                "https://unsloth.ai/docs/basics/api.md"
+            )
+            == "gitbook"
+        )
+
+    def test_md_url_with_query(self):
+        from silkworm.pipeline import PipelineOrchestrator
+        # query 剥离后路径仍以 .md 结尾 → 同样命中 gitbook
+        assert (
+            PipelineOrchestrator._infer_framework_from_url(
+                "https://x.com/docs/a.md?token=abc"
+            )
+            == "gitbook"
+        )
+
+    def test_non_md_url_generic(self):
+        from silkworm.pipeline import PipelineOrchestrator
+        assert (
+            PipelineOrchestrator._infer_framework_from_url(
+                "https://x.com/docs/basics/api"
+            )
+            == "generic"
+        )
+
+    def test_non_http_generic(self):
+        from silkworm.pipeline import PipelineOrchestrator
+        assert PipelineOrchestrator._infer_framework_from_url("cocoon:abc") == "generic"
+
+    def test_markdown_source_uses_inferred_framework(self):
+        """source=markdown + gitbook .md URL → gitbook profile（剥离 Agent Instructions）。"""
+        orchestrator = PipelineOrchestrator()
+        record = PageRecord(url="https://unsloth.ai/docs/basics/api.md", source="markdown")
+        md = (
+            "# API\n\nBody content here.\n\n" + "x" * 400
+            + "\n\n# Agent Instructions\n\nCite the docs.\n"
+        )
+        result = orchestrator.run(md, record)
+        assert record.framework == "gitbook"
+        assert "Agent Instructions" not in result.content

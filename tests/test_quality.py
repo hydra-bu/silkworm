@@ -312,3 +312,28 @@ class TestLLMQualityJudge:
             assert call_kwargs["temperature"] == 0.3
             assert call_kwargs["max_tokens"] == 512
             assert result["passed"] is True
+
+
+class TestEvaluateCodePreservedHardFail:
+    """硬失败项：原始有代码但输出 0 围栏 → 不通过。"""
+
+    _LONG = "# Title\n\n" + ("word " * 200) + "\n"
+
+    def test_hard_fail_when_code_lost(self):
+        content = "# Title\n\n" + ("word " * 200) + "\n"
+        report = evaluate(content, raw_code_count=3)
+        assert report.passed is False
+        assert "code_preserved" in report.checks
+        assert report.checks["code_preserved"].passed is False
+
+    def test_pass_when_code_preserved(self):
+        content = "# Title\n\n```python\nprint(1)\n```\n\n" + ("word " * 200) + "\n"
+        report = evaluate(content, raw_code_count=3)
+        assert report.passed is True
+        assert "code_preserved" not in report.checks
+
+    def test_no_baseline_unchanged(self):
+        content = "# Title\n\n" + ("word " * 200) + "\n"
+        report = evaluate(content)
+        assert "code_preserved" not in report.checks
+        assert report.passed is True

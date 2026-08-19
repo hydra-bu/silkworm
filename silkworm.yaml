@@ -7,8 +7,8 @@ global:
   llm_threshold_low: 0.3
   llm_threshold_high: 0.8
   llm:
-    base_url: https://openrouter.ai/api/v1
-    api_key: hf_dFvawCcsWolXLiqlktfxd zCnxrvZuLIrDU
+    base_url: http://ai-studio.dudongx.cn:8002/v1
+    api_key: "Dudongx#123"
     model: Qwen3.6
     temperature: 0.1
     timeout: 600.0

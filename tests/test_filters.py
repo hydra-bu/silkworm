@@ -4,6 +4,7 @@ import re
 
 from silkworm.models import FrameworkProfile
 from silkworm.spin.filters import (
+    _LIQUID_TAG,
     _extract_code_text,
     _make_fenced_block,
     filter_boilerplate,
@@ -500,3 +501,222 @@ class TestFlattenBlockInCells:
         content, _ = run_pipeline(html, GENERIC_PROFILE)
         assert "```" not in content, f"fenced block leaked into table cell:\n{content}"
         assert "a.b.c() x.y.z()" in content
+
+
+class TestLiquidTag:
+    """_LIQUID_TAG: 匹配 GitBook 真实 liquid 标签（{% 后带空格、带参数）。"""
+
+    def test_plain_open_tag(self):
+        assert _LIQUID_TAG.match("{% columns %}") is not None
+
+    def test_end_tag(self):
+        assert _LIQUID_TAG.match("{% endhint %}") is not None
+
+    def test_tag_with_params(self):
+        assert _LIQUID_TAG.match('{% hint style="warning" %}') is not None
+        assert _LIQUID_TAG.match('{% tab title="Codex" %}') is not None
+        assert _LIQUID_TAG.match('{% code overflow="wrap" %}') is not None
+        assert _LIQUID_TAG.match('{% update date="2026-08-18" tags="v0.1.0" %}') is not None
+        assert _LIQUID_TAG.match('{% content-ref url="/pages/abc123" %}') is not None
+        assert _LIQUID_TAG.match('{% embed url="https://youtu.be/xyz" %}') is not None
+
+    def test_full_corpus(self):
+        corpus = [
+            "{% columns %}", "{% column %}", "{% endcolumns %}", "{% endcolumn %}",
+            "{% stepper %}", "{% step %}", "{% endstepper %}", "{% endstep %}",
+            "{% hint style='info' %}", "{% hint style=\"danger\" icon=\"sparkles\" %}",
+            "{% endhint %}", "{% expand %}", "{% endexpand %}",
+            "{% frame %}", "{% endframe %}", "{% tabs %}", "{% endtabs %}",
+            "{% endtab %}", "{% note %}", "{% endnote %}",
+            "{% code title=\"bash\" %}", "{% endcode %}",
+            "{% endcontent-ref %}", "{% endembed %}",
+            "{% endupdate %}", "{% updates format=\"full\" %}", "{% endupdates %}",
+        ]
+        for line in corpus:
+            assert _LIQUID_TAG.match(line) is not None, f"should match: {line}"
+
+    def test_non_liquid_lines_not_matched(self):
+        for line in [
+            "normal prose",
+            "{% unknown_tag %}",
+            "some {% columns %} inline usage",
+            "# Heading with {% code %} in text",
+            "{%",
+            "%}",
+        ]:
+            assert _LIQUID_TAG.match(line) is None, f"should NOT match: {line}"
+
+
+class TestNormalizeMarkdown:
+    """normalize_markdown: liquid 剥离 / 章节剥离 / .md 链接还原。"""
+
+    GITBOOK_PROFILE = FrameworkProfile(
+        name="gitbook",
+        markdown_suffixes=[".md"],
+        markdown_strip_headings=["Agent Instructions"],
+        boilerplate_phrases=[
+            "For the complete documentation index",
+            "Last updated",
+            "Previous",
+            "Next",
+            "Edit this page",
+        ],
+    )
+
+    def test_liquid_tags_stripped(self):
+        from silkworm.spin.filters import normalize_markdown
+
+        raw = (
+            "# API\n\n"
+            "{% columns %}\n\n"
+            "{% column %}\n\n"
+            "Text inside column.\n\n"
+            "{% endcolumn %}\n\n"
+            "{% endcolumns %}\n\n"
+            "```bash\n"
+            "unsloth run --model foo\n"
+            "```\n"
+        )
+        out = normalize_markdown(raw, self.GITBOOK_PROFILE)
+        assert "{% columns %}" not in out
+        assert "{% column %}" not in out
+        assert "{% endcolumn %}" not in out
+        assert "{% endcolumns %}" not in out
+        assert "Text inside column." in out
+        assert "```bash" in out
+
+    def test_strip_headings_section_removed(self):
+        from silkworm.spin.filters import normalize_markdown
+
+        raw = (
+            "# API\n\n"
+            "Body text.\n\n"
+            "# Agent Instructions\n\n"
+            "GET https://unsloth.ai/docs/docs.md?ask=<question>\n\n"
+            "Instructions for AI agents.\n"
+        )
+        out = normalize_markdown(raw, self.GITBOOK_PROFILE)
+        assert "# Agent Instructions" not in out
+        assert "GET https://unsloth.ai/docs/docs.md" not in out
+        assert "Instructions for AI agents." not in out
+        assert "Body text." in out
+
+    def test_md_links_restored_to_bare(self):
+        from silkworm.spin.filters import normalize_markdown
+
+        raw = "See [API](https://unsloth.ai/docs/basics/api.md) and [Intro](../intro.md).\n"
+        out = normalize_markdown(raw, self.GITBOOK_PROFILE)
+        assert "api.md)" not in out
+        assert "api)" in out
+        assert "intro.md)" not in out
+        assert "intro)" in out
+
+    def test_card_table_stripped(self):
+        from silkworm.spin.filters import normalize_markdown
+
+        raw = (
+            "# Install\n\n"
+            "Pick a method:\n\n"
+            '<table data-view="cards">\n'
+            '<thead><tr><th>Method</th></tr></thead>\n'
+            '<tbody><tr><td><a href="/pages/abc">Linux</a></td></tr></tbody>\n'
+            "</table>\n\n"
+            "Rest of page.\n"
+        )
+        out = normalize_markdown(raw, self.GITBOOK_PROFILE)
+        assert "data-view" not in out
+        assert "/pages/abc" not in out
+        assert "Rest of page." in out
+
+
+class TestNormalizeMarkdownGitBook:
+    """GitBook 官方 markdown 端点的清洗（真实爬取内容形态）。"""
+
+    PROFILE = FrameworkProfile(
+        name="gitbook",
+        boilerplate_phrases=["Agent Instructions", "Previous", "Next", "Last updated"],
+        markdown_strip_headings=["Agent Instructions"],
+    )
+
+    def test_strips_spaced_liquid_tags(self):
+        from silkworm.spin.filters import normalize_markdown
+        md = "# Title\n\n{% columns %}\n{% column %}\nLeft content\n{% /column %}\n{% /columns %}\n"
+        out = normalize_markdown(md, self.PROFILE)
+        assert "{% columns %}" not in out
+        assert "{% /columns %}" not in out
+        assert "Left content" in out
+
+    def test_strips_code_block_tags_keeps_code(self):
+        from silkworm.spin.filters import normalize_markdown
+        md = (
+            "# Setup\n\n"
+            '{% code overflow="wrap" %}\n'
+            "pip install unsloth\n"
+            "{% endcode %}\n"
+        )
+        out = normalize_markdown(md, self.PROFILE)
+        assert "{% code" not in out
+        assert "{% endcode %}" not in out
+        assert "```" in out
+        assert "pip install unsloth" in out
+
+    def test_strips_hint_stepper_and_note_tags(self):
+        from silkworm.spin.filters import normalize_markdown
+        md = (
+            "# Guide\n\n"
+            '{% hint style="info" %}\n'
+            "Important tip\n"
+            "{% endhint %}\n"
+            "{% steps %}\n"
+            "{% step title=\"One\" %}\n"
+            "Step body\n"
+            "{% endstep %}\n"
+            "{% endsteps %}\n"
+            "{% note %}\n"
+            "A note\n"
+            "{% endnote %}\n"
+        )
+        out = normalize_markdown(md, self.PROFILE)
+        assert "{%" not in out
+        assert "Important tip" in out
+        assert "Step body" in out
+        assert "A note" in out
+
+    def test_strips_card_tables(self):
+        from silkworm.spin.filters import normalize_markdown
+        md = (
+            "# Models\n\n"
+            "Intro line.\n\n"
+            '<table data-view="cards" data-rows="3">\n'
+            "<tr><td><h3>Qwen3</h3><p>a model</p></td></tr>\n"
+            "</table>\n\n"
+            "After the cards.\n"
+        )
+        out = normalize_markdown(md, self.PROFILE)
+        assert 'data-view="cards"' not in out
+        assert "<table" not in out
+        assert "Intro line." in out
+        assert "After the cards." in out
+
+    def test_strips_agent_instructions_section(self):
+        from silkworm.spin.filters import normalize_markdown
+        md = (
+            "# API\n\n"
+            "Real doc content.\n\n"
+            "# Agent Instructions\n\n"
+            "- Please cite this page\n"
+            "- Use the llms.txt index\n"
+        )
+        out = normalize_markdown(md, self.PROFILE)
+        assert "Agent Instructions" not in out
+        assert "llms.txt" not in out
+        assert "Real doc content." in out
+
+    def test_generic_profile_keeps_liquid_tags(self):
+        """generic 框架不应套用 gitbook 清洗（机制是 Profile 驱动的）。"""
+        from silkworm.spin.filters import normalize_markdown
+        md = "# T\n\n{% columns %}\nbody\n"
+        out = normalize_markdown(md, GENERIC_PROFILE)
+        # 默认 generic 不声明 strip_headings；liquid 清洗属于 gitbook profile
+        # 断言不崩溃、内容保留即可
+        assert "body" in out

@@ -399,6 +399,7 @@ def evaluate(
     llm_low: float = 0.3,
     llm_high: float = 0.8,
     llm_config: LLMConfig | None = None,
+    raw_code_count: int | None = None,
 ) -> QualityReport:
     checks = {
         "length": check_length(content, min_length),
@@ -408,9 +409,25 @@ def evaluate(
         "noise_lines": check_noise_lines(content),
     }
 
+    # 硬失败项：原始内容含代码（围栏/```/<pre>）但输出 0 围栏 →
+    # 代码块整段丢失，直接判不通过（防止"0 个代码块=偶数=通过"的误报）
+    code_preserved = True
+    if raw_code_count is not None and raw_code_count > 0:
+        fence_count = len(_CODE_FENCE.findall(content))
+        code_preserved = fence_count > 0
+        if not code_preserved:
+            checks["code_preserved"] = CheckResult(
+                passed=False,
+                score=0.0,
+                detail=f"原始内容含 {raw_code_count} 个代码块，输出 0 围栏（代码块丢失）",
+            )
+
     total_score = sum(c.score for c in checks.values()) / len(checks)
     all_passed = all(c.passed for c in checks.values())
     passed = all_passed or total_score >= score_threshold
+    # 硬失败项优先级高于分数阈值
+    if not code_preserved:
+        passed = False
 
     retry_action = None
     if not all_passed:

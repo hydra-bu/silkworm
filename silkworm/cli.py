@@ -51,6 +51,16 @@ def _fmt_size(size: int) -> str:
 _COCOON_MANIFEST = "_manifest.json"
 
 
+def _record_rank(p: dict) -> int:
+    """清单记录去重优先级：官方原生 markdown > 非 .md 真实页面 > 其余。"""
+    u = p["url"]
+    if p.get("source") == "markdown":
+        return 2
+    if not u.endswith(".md"):
+        return 1
+    return 0
+
+
 def _save_cocoon_manifest(cocoon: Path, records: list) -> None:
     import json
     manifest = {
@@ -62,6 +72,9 @@ def _save_cocoon_manifest(cocoon: Path, records: list) -> None:
                 "http_status": r.http_status,
                 "content_hash": r.content_hash,
                 "html_file": r.raw_html_path,
+                "md_file": r.raw_md_path,
+                "source": r.source,
+                "framework": r.framework,
                 "status": r.status,
             }
             for r in records
@@ -234,16 +247,35 @@ def spin(
         ]
     else:
         from silkworm.models import PageRecord
+        # 清单去重：同一页面的 HTML 端点（X）与官方 markdown 端点（X.md）
+        # 指向同一内容，仅保留一条，避免输出 X.md 与 X.md.md 重复文件。
+        # 优先级：source=markdown（官方原生内容）> 非 .md 真实页面 > 其余。
+        best: dict[str, dict] = {}
+        for p in pages:
+            u = p["url"]
+            base = u[:-3] if u.endswith(".md") else u
+            cur = best.get(base)
+            if cur is None or _record_rank(p) > _record_rank(cur):
+                best[base] = p
+        # 保持原始顺序
+        kept = set(id(p) for p in best.values())
+        filtered_pages = [p for p in pages if id(p) in kept]
         records = [
             PageRecord(
                 url=p["url"],
                 http_status=p.get("http_status", 0),
                 content_hash=p.get("content_hash", ""),
                 raw_html_path=p.get("html_file", ""),
+                raw_md_path=p.get("md_file", ""),
+                source=p.get("source", "html"),
+                framework=p.get("framework", ""),
                 status=p.get("status", "fetched"),
             )
-            for p in pages
+            for p in filtered_pages
         ]
+        dropped = len(pages) - len(records)
+        if dropped:
+            console.print(f"  → 清单去重: {len(pages)} → [bold]{len(records)}[/]（丢弃 {dropped} 个重复端点）")
         console.print(f"  → 清单中发现 [bold]{len(records)}[/] 个页面")
 
     ok = [r for r in records if r.http_status == 200]
@@ -405,15 +437,21 @@ def _do_process(
 
     results = []
     for i, record in enumerate(records, 1):
-        html_path = cocoon / record.raw_html_path
-        if not html_path.exists():
-            console.print(f"  [{i}/{len(records)}] ⚠️  {record.url}  （原始 HTML 文件丢失）")
+        # markdown 源读官方 md 文件，HTML 源读原始 HTML
+        if record.source == "markdown" and record.raw_md_path:
+            raw_path = cocoon / record.raw_md_path
+            is_md = True
+        else:
+            raw_path = cocoon / record.raw_html_path
+            is_md = False
+        if not raw_path.exists():
+            console.print(f"  [{i}/{len(records)}] ⚠️  {record.url}  （原始文件丢失: {raw_path.name}）")
             results.append((record, None, None))
             continue
 
-        raw_html = html_path.read_text(encoding="utf-8", errors="replace")
+        raw_text = raw_path.read_text(encoding="utf-8", errors="replace")
         try:
-            result = orchestrator.run(raw_html, record)
+            result = orchestrator.run(raw_text, record)
         except Exception as e:
             console.print(f"  [{i}/{len(records)}] ❌ {record.url}  （管线异常: {e}）")
             results.append((record, None, None))
@@ -425,6 +463,8 @@ def _do_process(
 
         icon = "✅" if result.final_report.passed else "🟡"
         tag = f"  分数: {result.final_report.total_score:.2f}"
+        if is_md:
+            tag += "  [官方md]"
         if result.retry_count > 0:
             tag += f"  重试: {result.retry_count} 次"
         console.print(f"  [{i}/{len(records)}] {icon} {record.url}  （{tag}）")
