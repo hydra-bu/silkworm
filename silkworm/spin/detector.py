@@ -6,6 +6,11 @@ from silkworm.models import FingerprintRule, FrameworkProfile
 
 # 内置框架指纹库
 BUILTIN_FINGERPRINTS: dict[str, list[FingerprintRule]] = {
+    "gitbook": [
+        FingerprintRule(selector='meta[name="generator"]', value="gitbook", score=3),
+        FingerprintRule(selector="div[class*='group/codeblock']", score=2),
+        FingerprintRule(selector="script#_R_", score=1),
+    ],
     "kubernetes": [
         FingerprintRule(selector='main[data-pagefind-body]', score=3),
         FingerprintRule(selector=".td-content", score=2),
@@ -116,6 +121,27 @@ BUILTIN_PROFILES: dict[str, FrameworkProfile] = {
             "language-html": "html",
             "language-css": "css",
         },
+    ),
+    "gitbook": FrameworkProfile(
+        name="gitbook",
+        # GitBook 官方为每个页面提供 markdown 端点（URL 追加 .md），
+        # 优先使用官方源可避免 RSC 客户端岛导致的正文/代码块丢失。
+        markdown_suffixes=[".md"],
+        main_selector="main, article",
+        remove_selectors=[
+            "nav", "header", "footer", "aside",
+            ".breadcrumb", "[aria-label='breadcrumb']",
+            "div.sr-only",
+        ],
+        boilerplate_phrases=[
+            "For the complete documentation index",
+            "Last updated",
+            "Previous", "Next",
+            "Edit this page",
+            "Was this helpful?",
+        ],
+        markdown_strip_headings=["Agent Instructions"],
+        code_lang_class_map={},
     ),
     "generic": FrameworkProfile(
         name="generic",

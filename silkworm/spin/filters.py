@@ -751,3 +751,128 @@ def run_pipeline(
         steps.append(name)
 
     return content, steps
+
+
+_LIQUID_TAG = re.compile(
+    r"^\s*\{%\s*/?\s*(?:columns|column|steps?|endcolumns|endcolumn|endsteps?|"
+    r"stepper|step|endstepper|endstep|"
+    r"hint|endhint|expand|endexpand|frame|endframe|tabs|tab|endtabs|endtab|"
+    r"note|endnote|code|endcode|content-ref|endcontent-ref|embed|endembed|"
+    r"updates|update|endupdates|endupdate)(?:\b(?:[^%]|%(?!\}))*)?%\s*\}\s*$"
+)
+_LIQUID_CODE_START = re.compile(r"^\s*\{%\s*code\b[^%]*%\}\s*$")
+
+# GitBook 内容引用卡片表（<table data-view="cards">），整块剥离。
+_CARD_TABLE = re.compile(r'<table\b[^>]*data-view=["\']cards["\'][^>]*>.*?</table>', re.DOTALL | re.IGNORECASE)
+
+
+def normalize_markdown(raw_md: str, profile: FrameworkProfile) -> str:
+    """官方 markdown 端点内容的轻量规整（通用，不依赖 HTML 管线）。
+
+    框架官方 markdown 已是结构化正文，这里只做格式规整：
+    1. 移除 profile 声明的 markdown_strip_headings 章节（含其下子内容）
+    2. 剥离框架 Liquid 布局标签（{% columns %}、{% code ... %} 等），保留内部内容
+    3. 剥离 GitBook 内容引用卡片表（<table data-view="cards"> 整块）
+    4. 内部 .md 链接还原为页面 URL（/docs/x/y.md → /docs/x/y）
+    5. 去除 profile 声明的 boilerplate 短语行
+    6. 压缩 3+ 连续空行、统一行尾空白与文件结尾
+    """
+    # 2b. 卡片表整块剥离（多行，需在行处理前）
+    raw_md = _CARD_TABLE.sub("", raw_md)
+    lines = raw_md.splitlines()
+
+    # 1. 移除指定章节：从匹配的标题行起，到同级或更高级标题为止
+    stripped: list[str] = []
+    if profile.markdown_strip_headings:
+        skip_level = 0
+        for line in lines:
+            m = re.match(r"^(#{1,6})\s+(.+?)\s*$", line)
+            if skip_level:
+                if m and len(m.group(1)) <= skip_level:
+                    skip_level = 0
+                else:
+                    continue
+            if m and m.group(2).strip() in profile.markdown_strip_headings:
+                skip_level = len(m.group(1))
+                continue
+            stripped.append(line)
+    else:
+        stripped = lines
+
+    # 2. 剥离 Liquid 布局标签行。
+    #    {% code %} ... {% endcode %} 是特殊块：若内部内容没有围栏，
+    #    剥离标签后补 ``` 围栏保留代码语义；有围栏则原样保留。
+    cleaned: list[str] = []
+    in_code_block = False
+    code_lines: list[str] = []
+    for l in stripped:
+        if in_code_block:
+            if re.match(r"^\s*\{%\s*/?(endcode|/code)\b", l):
+                if any(cl.strip() for cl in code_lines):
+                    if code_lines[0].lstrip().startswith("```"):
+                        cleaned.extend(code_lines)
+                    else:
+                        cleaned.extend(["```"] + code_lines + ["```"])
+                in_code_block = False
+                code_lines = []
+            else:
+                code_lines.append(l)
+            continue
+        if _LIQUID_CODE_START.match(l):
+            in_code_block = True
+            continue
+        if _LIQUID_TAG.match(l):
+            continue
+        cleaned.append(l)
+    if in_code_block and any(cl.strip() for cl in code_lines):
+        if code_lines[0].lstrip().startswith("```"):
+            cleaned.extend(code_lines)
+        else:
+            cleaned.extend(["```"] + code_lines + ["```"])
+    stripped = cleaned
+
+    # 3. .md 链接还原 + boilerplate 行移除
+    #    行级匹配安全规则：仅当行以引用符开头（框架注入的提示条）
+    #    或行较短（典型样板行长度）时才整行移除，避免误伤正文。
+    out: list[str] = []
+    phrases = profile.boilerplate_phrases
+    for line in stripped:
+        line = re.sub(r"\]\(([^)\s]*?\.md)(#[^)\s]*)?\)", lambda m: "](%s%s)" % (m.group(1)[:-3], m.group(2) or ""), line)
+        stripped_line = line.strip()
+        if stripped_line and (stripped_line.startswith(">") or len(stripped_line) < 100):
+            if any(phrase and phrase in stripped_line for phrase in phrases):
+                continue
+        out.append(line.rstrip())
+
+    # 5. 空行压缩
+    final_lines: list[str] = []
+    blank_run = 0
+    for line in out:
+        if not line:
+            blank_run += 1
+            if blank_run > 2:
+                continue
+        else:
+            blank_run = 0
+        final_lines.append(line)
+
+    # 6. GitBook emoji 短码转义清理：把非代码块中的 \\\_ 还原为 _
+    #    GitBook 会把 emoji 短码如 :inbox_tray: 转义为 :inbox\\_tray:
+    #    也会把 URL 路径中的下划线转义为 \\_（如 UD-Q2\\_K\\_XL）
+    #    这是源文件固有特性，但渲染时反斜杠会显示出来，影响可读性。
+    #    代码块内的 \\\_ 保留（如 Python 转义字符）。
+    result_lines: list[str] = []
+    in_code_block = False
+    for line in final_lines:
+        stripped = line.lstrip()
+        if stripped.startswith(("```", "~~~")):
+            in_code_block = not in_code_block
+            result_lines.append(line)
+            continue
+        if not in_code_block:
+            # 清理 \\\_ 转义（包括链接 URL 中和普通文本中的）
+            # 用负向后瞻确保不匹配已有的反斜杠（\\\\_）
+            line = re.sub(r"(?<!\\)\\_", "_", line)
+        result_lines.append(line)
+
+    return "\\n".join(result_lines).strip() + "\\n"

@@ -30,6 +30,14 @@ class FrameworkProfile(BaseModel):
     remove_selectors: list[str] = Field(default_factory=list)
     boilerplate_phrases: list[str] = Field(default_factory=list)
     code_lang_class_map: dict[str, str] = Field(default_factory=dict)
+    markdown_suffixes: list[str] = Field(
+        default_factory=list,
+        description="该框架官方的 markdown 端点后缀（如 ['.md']），抓取时优先尝试",
+    )
+    markdown_strip_headings: list[str] = Field(
+        default_factory=list,
+        description="官方 markdown 中应整体移除的章节（按标题匹配，含其下全部子内容），如框架注入的 Agent 指令段",
+    )
 
 
 PageStatus = Literal[
@@ -46,9 +54,11 @@ class PageRecord(BaseModel):
     content_hash: str = ""
     http_status: int = 0
     raw_html_path: str = ""
+    raw_md_path: str = ""  # 官方 markdown 端点内容路径（source=markdown 时）
     framework: str = ""
     status: PageStatus = "pending"
     quality_report: dict | None = None
+    source: Literal["html", "markdown"] = "html"  # 原始内容类型
 
 
 class FingerprintRule(BaseModel):

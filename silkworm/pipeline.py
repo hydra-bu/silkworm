@@ -1,10 +1,11 @@
 from copy import deepcopy
+import re
 from typing import NamedTuple
 
 from silkworm.config import LLMConfig
 from silkworm.models import FrameworkProfile, PageRecord, QualityReport
 from silkworm.spin.detector import detect_framework, get_profile
-from silkworm.spin.filters import run_pipeline
+from silkworm.spin.filters import normalize_markdown, run_pipeline
 from silkworm.spin.quality import evaluate
 
 
@@ -14,6 +15,10 @@ class PipelineResult(NamedTuple):
     steps: list[str]
     retry_count: int
     final_report: QualityReport
+
+
+# 围栏代码块分隔行（``` 或 ~~~，起始可带缩进与语言标注，闭合为裸行）
+_FENCE_LINE = re.compile(r"^\s*(`{3,}|~{3,})[^`~]*$", re.MULTILINE)
 
 
 _GENERIC_BOILERPLATE_FALLBACK = [
@@ -40,13 +45,44 @@ class PipelineOrchestrator:
         self.quality_threshold = quality_threshold
         self.llm_config = llm_config
 
-    def run(self, raw_html: str, record: PageRecord) -> PipelineResult:
+    def run(self, raw_content: str, record: PageRecord) -> PipelineResult:
         if not record.framework:
-            record.framework = detect_framework(raw_html)
+            if record.source == "markdown":
+                # markdown 源没有 HTML 可跑指纹检测，但 URL 可能命中框架的
+                # 官方 markdown 端点约定（Profile.markdown_suffixes 声明），
+                # 据此推断框架；未命中则回退 generic。
+                record.framework = self._infer_framework_from_url(record.url)
+            else:
+                record.framework = detect_framework(raw_content)
         profile = get_profile(record.framework)
 
-        content, steps, report, retry_count = self._run_with_retry(raw_html, profile)
+        if record.source == "markdown":
+            content, steps, report = self._run_markdown(raw_content, profile)
+            return self._finalize(content, record, steps, report, 0)
 
+        content, steps, report, retry_count = self._run_with_retry(raw_content, profile)
+        return self._finalize(content, record, steps, report, retry_count)
+
+    @staticmethod
+    def _infer_framework_from_url(url: str) -> str:
+        """markdown 源：按 URL 路径后缀匹配 Profile.markdown_suffixes 声明的框架。"""
+        if not url or not url.startswith(("http://", "https://")):
+            return "generic"
+        path = url.split("?", 1)[0].split("#", 1)[0]
+        for name, profile in get_profile.__globals__["BUILTIN_PROFILES"].items():
+            suffixes = getattr(profile, "markdown_suffixes", None)
+            if suffixes and path.endswith(tuple(suffixes)):
+                return name
+        return "generic"
+
+    def _finalize(
+        self,
+        content: str,
+        record: PageRecord,
+        steps: list[str],
+        report: QualityReport,
+        retry_count: int,
+    ) -> PipelineResult:
         if report.passed:
             record.status = "passed"
         else:
@@ -61,12 +97,34 @@ class PipelineOrchestrator:
             final_report=report,
         )
 
+    def _run_markdown(
+        self, raw_md: str, profile: FrameworkProfile
+    ) -> tuple[str, list[str], QualityReport]:
+        """官方 markdown 端点内容：轻量 normalize 后直接质检。
+
+        框架官方输出的 markdown 已是结构化正文，跳过 HTML 清洗管线，
+        仅做格式规整（空白/样板行），再走与 HTML 管线相同的质量门禁。
+        """
+        content = normalize_markdown(raw_md, profile)
+        steps = ["markdown_normalize", "quality_gate"]
+        raw_code_count = len(_FENCE_LINE.findall(raw_md)) // 2
+        report = evaluate(
+            content,
+            min_length=self.quality_min_length,
+            score_threshold=self.quality_threshold,
+            llm_config=self.llm_config,
+            raw_code_count=raw_code_count,
+        )
+        return content, steps, report
+
     def _run_with_retry(
         self, raw_html: str, profile: FrameworkProfile
     ) -> tuple[str, list[str], QualityReport, int]:
         adj_profile = deepcopy(profile)
         skip: set[str] = set()
         extra_phrases: list[str] = []
+        # HTML 源：以 <pre> 数量作为原始代码块基线（供质检硬失败项使用）
+        raw_code_count = raw_html.lower().count("<pre")
 
         for attempt in range(self.max_retries + 1):
             if extra_phrases:
@@ -80,6 +138,7 @@ class PipelineOrchestrator:
                 min_length=self.quality_min_length,
                 score_threshold=self.quality_threshold,
                 llm_config=self.llm_config,
+                raw_code_count=raw_code_count,
             )
 
             if report.passed:

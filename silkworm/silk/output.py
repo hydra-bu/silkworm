@@ -43,8 +43,12 @@ def resolve_output_path(
 
     path = original_path.rstrip("/")
 
+    # 剥离端点后缀：官方 markdown 端点（X.md）与 HTML 端点（X.html）
+    # 都对应同一页面 X，统一输出为 X.md，避免 X.md.md 重复路径
     if path.endswith(".html"):
         path = path[:-5]
+    elif path.endswith(".md"):
+        path = path[:-3]
     elif original_path.endswith("/"):
         path = path + "/index"
 
