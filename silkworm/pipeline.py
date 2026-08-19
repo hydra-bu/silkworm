@@ -1,12 +1,15 @@
 from copy import deepcopy
+import logging
 import re
 from typing import NamedTuple
 
 from silkworm.config import LLMConfig
-from silkworm.models import FrameworkProfile, PageRecord, QualityReport
+from silkworm.models import FrameworkProfile, PageRecord, QualityReport, CheckResult
 from silkworm.spin.detector import detect_framework, get_profile
 from silkworm.spin.filters import normalize_markdown, run_pipeline
 from silkworm.spin.quality import evaluate
+
+logger = logging.getLogger(__name__)
 
 
 class PipelineResult(NamedTuple):
@@ -46,6 +49,21 @@ class PipelineOrchestrator:
         self.llm_config = llm_config
 
     def run(self, raw_content: str, record: PageRecord) -> PipelineResult:
+        # 内容质量预检查：过滤低价值文件
+        if not self._is_content_valuable(raw_content, record):
+            record.status = "skipped_low_quality"
+            return PipelineResult(
+                content="",
+                record=record,
+                steps=["skipped_low_quality"],
+                retry_count=0,
+                final_report=QualityReport(
+                    passed=False,
+                    total_score=0.0,
+                    checks={"quality": CheckResult(passed=False, score=0.0, detail="Content too short or low value")},
+                ),
+            )
+
         if not record.framework:
             if record.source == "markdown":
                 # markdown 源没有 HTML 可跑指纹检测，但 URL 可能命中框架的
@@ -174,3 +192,51 @@ class PipelineOrchestrator:
             skip.add(filter_name)
         else:
             profile.main_selector = _WIDE_SELECTOR
+
+    @staticmethod
+    def _is_content_valuable(raw_content: str, record: PageRecord) -> bool:
+        """预检查内容质量：过滤明显无意义的页面。
+
+        直接跳过的特征（内容极少，无需重试）：
+        - 正文 < 50 字符（去掉 frontmatter）
+        - 正文 < 5 行
+        - 几乎全是链接（链接密度 > 20，无实质内容）
+
+        其他情况走正常重试流程。
+        """
+        # 去掉 frontmatter
+        if raw_content.startswith("---"):
+            parts = raw_content.split("---", 2)
+            if len(parts) >= 3:
+                body = parts[2]
+            else:
+                body = raw_content
+        else:
+            body = raw_content
+
+        lines = body.split("\n")
+        non_empty_lines = [l for l in lines if l.strip()]
+        char_count = len(body.strip())
+        line_count = len(non_empty_lines)
+
+        # 计算链接密度
+        link_count = len(re.findall(r"\[.*?\]\(.*?\)", body))
+        link_density = link_count / max(1, char_count / 100)  # 每100字符的链接数
+
+        # 只有内容极少时才直接跳过（无需重试）
+        is_low_value = (
+            char_count < 50
+            or line_count < 5
+            or (link_density > 20 and char_count < 200)  # 几乎全是链接
+        )
+
+        if is_low_value:
+            logger.info(
+                "跳过低价值页面: %s (%d chars, %d lines, links=%d)",
+                record.url,
+                char_count,
+                line_count,
+                link_count,
+            )
+
+        return not is_low_value
