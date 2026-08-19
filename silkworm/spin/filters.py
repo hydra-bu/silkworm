@@ -856,11 +856,9 @@ def normalize_markdown(raw_md: str, profile: FrameworkProfile) -> str:
             blank_run = 0
         final_lines.append(line)
 
-    # 6. GitBook emoji 短码转义清理：把非代码块中的 \\\_ 还原为 _
-    #    GitBook 会把 emoji 短码如 :inbox_tray: 转义为 :inbox\\_tray:
-    #    也会把 URL 路径中的下划线转义为 \\_（如 UD-Q2\\_K\\_XL）
-    #    这是源文件固有特性，但渲染时反斜杠会显示出来，影响可读性。
-    #    代码块内的 \\\_ 保留（如 Python 转义字符）。
+    # 6. 清理字面量转义序列（GitBook 源文件特性）
+    #    - \n -> 实际换行
+    #    - \_ -> _ (但保留 \\_ 即双反斜杠)
     result_lines: list[str] = []
     in_code_block = False
     for line in final_lines:
@@ -870,9 +868,10 @@ def normalize_markdown(raw_md: str, profile: FrameworkProfile) -> str:
             result_lines.append(line)
             continue
         if not in_code_block:
-            # 清理 \\\_ 转义（包括链接 URL 中和普通文本中的）
-            # 用负向后瞻确保不匹配已有的反斜杠（\\\\_）
-            line = re.sub(r"(?<!\\)\\_", "_", line)
+            # 先替换字面量 \n 为实际换行（处理整个文本块）
+            line = line.replace('\\n', '\n')
+            # 再清理 \_ 转义（用负向后瞻确保不匹配 \\_）
+            line = re.sub(r'(?<!\\)\\_', '_', line)
         result_lines.append(line)
 
-    return "\\n".join(result_lines).strip() + "\\n"
+    return '\n'.join(result_lines).strip() + '\n'
